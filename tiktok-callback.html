@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>TikTok Login</title>
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="doc">
+  <p><a href="index.html">← Bounce Rumble</a></p>
+  <h1>TikTok login</h1>
+  <p id="msg">No login code found in this link.</p>
+  <p><button id="copy" hidden>Copy this page's link</button></p>
+  <p class="muted">Paste it into <code>tools/tiktok_auth.py exchange '…'</code> on the owner's computer. This page sends nothing anywhere.</p>
+</main>
+<script>
+  const q = new URLSearchParams(location.search);
+  const msg = document.getElementById("msg");
+  const btn = document.getElementById("copy");
+  if (q.get("error")) {
+    msg.textContent = "TikTok returned an error: " + q.get("error") + " " + (q.get("error_description") || "");
+  } else if (q.get("code")) {
+    msg.textContent = "Login approved. Copy this page's full link and paste it into the terminal.";
+    btn.hidden = false;
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(location.href); btn.textContent = "Copied"; }
+      catch (e) { btn.textContent = "Copy failed: copy the address bar instead"; }
+    };
+  }
+</script>
+<footer>© 2026 Bounce Rumble</footer>
+</body>
+</html>
