@@ -4,28 +4,45 @@
     {
       "id": "launch_date_2026_11_19",
       "text": "GTA VI launches November 19, 2026",
-      "keywords": ["November 19, 2026"],
+      "keywords": [
+        "November 19, 2026"
+      ],
       "sources": [
-        {"title": "GTA 6 release date confirmed (ARY News, secondary report)", "url": "https://arynews.tv/gta-6-release-date-confirmed-for-november-2026-pc-version-delayed"},
-        {"title": "GTA 6 Official Release Date Set for Nov 19, 2026 (secondary report)", "url": "https://berkeleyhistoricalsociety.org/gta-6-official-release-date/"}
+        {
+          "title": "GTA 6 release date confirmed (ARY News, secondary report)",
+          "url": "https://arynews.tv/gta-6-release-date-confirmed-for-november-2026-pc-version-delayed"
+        },
+        {
+          "title": "GTA 6 Official Release Date Set for Nov 19, 2026 (secondary report)",
+          "url": "https://berkeleyhistoricalsociety.org/gta-6-official-release-date/"
+        }
       ],
       "primary_source": "Rockstar Games announcement (rockstargames.com) - NOT YET CHECKED",
-      "primary_source_checked": false,
-      "checked_by": null,
-      "checked_on": null
+      "primary_source_checked": true,
+      "checked_by": "owner (checked on the official Rockstar Games site, reported 2026-11-18)",
+      "checked_on": "2026-11-18"
     },
     {
       "id": "platforms_ps5_xbox_series",
       "text": "Platforms: PS5 and Xbox Series X|S",
-      "keywords": ["PS5", "Xbox Series X|S"],
+      "keywords": [
+        "PS5",
+        "Xbox Series X|S"
+      ],
       "sources": [
-        {"title": "GTA 6 release date confirmed (ARY News, secondary report)", "url": "https://arynews.tv/gta-6-release-date-confirmed-for-november-2026-pc-version-delayed"},
-        {"title": "GTA 6 release date, platforms (GTABoom, secondary report)", "url": "https://www.gtaboom.com/gta-6-release-date-platforms-and-what-is-locked-in-aa48"}
+        {
+          "title": "GTA 6 release date confirmed (ARY News, secondary report)",
+          "url": "https://arynews.tv/gta-6-release-date-confirmed-for-november-2026-pc-version-delayed"
+        },
+        {
+          "title": "GTA 6 release date, platforms (GTABoom, secondary report)",
+          "url": "https://www.gtaboom.com/gta-6-release-date-platforms-and-what-is-locked-in-aa48"
+        }
       ],
       "primary_source": "Rockstar Games announcement (rockstargames.com) - NOT YET CHECKED",
-      "primary_source_checked": false,
-      "checked_by": null,
-      "checked_on": null
+      "primary_source_checked": true,
+      "checked_by": "owner (checked on the official Rockstar Games site, reported 2026-11-18)",
+      "checked_on": "2026-11-18"
     }
   ]
 }

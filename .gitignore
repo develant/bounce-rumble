@@ -1,4 +1,5 @@
-gta/state/
+gta/state/*
+!gta/state/gta.sqlite
 gta/renders/
 gta/work/
 __pycache__/

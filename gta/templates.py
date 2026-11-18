@@ -56,3 +56,31 @@ def description_for(plan, disclaimer):
         lines.append(f"- {s['title']}: {s['url']}")
     lines += ["", disclaimer, "", "#GTA6 #GTAVI #GTA"]
     return "\n".join(lines)
+
+
+def question_plan(key, hook, segments, style="midnight_neon", duration_s=24.0, title="", creator_id="self:bounce-rumble"):
+    """Fact-free question Short: no claims about the game, no third-party footage."""
+    return {
+        "template": "question_v1",
+        "style": style,
+        "hook": hook,
+        "segments": segments,
+        "duration_s": duration_s,
+        "title": title,
+        "sources": [],
+        "fact_ids": [],
+        "creator_id": creator_id,
+        "key": key,
+    }
+
+
+def question_description(plan, disclaimer):
+    return "\n".join([
+        "A question for you: comment your answer.",
+        "",
+        "This video makes no factual claims about the game and uses no third-party footage.",
+        "",
+        disclaimer,
+        "",
+        "#GTA6 #GTAVI #shorts",
+    ])
