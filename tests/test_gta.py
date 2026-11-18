@@ -1,0 +1,389 @@
+"""Tests for the GTA VI pipeline. Run with: python -m pytest -q tests
+
+No network access: YouTube and Twitch are replaced by fakes. Rendering uses the local ffmpeg.
+"""
+import copy
+import json
+from datetime import date, timedelta
+from pathlib import Path
+
+import pytest
+
+from gta import discovery, publisher, rights, scoring, templates
+from gta.config import load_config
+from gta.quota import QuotaExceeded, QuotaLedger
+from gta.store import Store
+
+CFG = load_config()
+
+
+@pytest.fixture
+def store(tmp_path):
+    return Store(str(tmp_path / "t.sqlite"))
+
+
+# ------------------------------------------------------------ fakes
+class FakeCall:
+    def __init__(self, data):
+        self._data = data
+
+    def execute(self):
+        return self._data(None) if callable(self._data) else self._data
+
+
+class FakeResource:
+    def __init__(self, responses, name):
+        self.responses, self.name = responses, name
+
+    def _call(self, verb, **kw):
+        handler = self.responses.get((self.name, verb))
+        if handler is None:
+            raise AssertionError(f"unexpected call {self.name}.{verb}")
+        return FakeCall(handler(kw))
+
+    def list(self, **kw):
+        return self._call("list", **kw)
+
+    def insert(self, **kw):
+        return self._call("insert", **kw)
+
+
+class FakeService:
+    def __init__(self, responses):
+        self.responses = responses
+
+    def search(self):
+        return FakeResource(self.responses, "search")
+
+    def videos(self):
+        return FakeResource(self.responses, "videos")
+
+    def playlists(self):
+        return FakeResource(self.responses, "playlists")
+
+    def playlistItems(self):
+        return FakeResource(self.responses, "playlistItems")
+
+
+class FakeYT:
+    """Mimics YouTubeClient: quota is enforced by the real ledger."""
+
+    def __init__(self, store, responses=None, quota_cfg=None):
+        # External usage is zeroed here so tests exercise publishing logic, not today's real budget.
+        qc = copy.deepcopy(quota_cfg or CFG["quota"])
+        if quota_cfg is None:
+            qc["external_units_by_day"] = {}
+        self.quota = QuotaLedger(store, qc)
+        self.service = FakeService(responses or {})
+
+    def request(self, method, call, times=1):
+        self.quota.spend(method, times=times)
+        return call.execute()
+
+
+# ------------------------------------------------------------ rights
+def test_missing_record_is_denied(store):
+    ok, reason = rights.check(store, "creator-x")
+    assert not ok and "no permission" in reason
+
+
+def test_pending_and_denied_never_publish(store):
+    rights.upsert_permission(store, "c1", "pending")
+    assert rights.check(store, "c1")[0] is False
+    rights.upsert_permission(store, "c1", "denied")
+    assert rights.check(store, "c1")[0] is False
+
+
+def test_verified_requires_complete_fields(store):
+    with pytest.raises(rights.RightsError):
+        rights.upsert_permission(store, "c2", "verified", permission_source="email")
+
+
+def test_verified_then_expired(store):
+    future = (date.today() + timedelta(days=30)).isoformat()
+    rights.upsert_permission(store, "c3", "verified", permission_source="written licence",
+                             permission_date="2026-11-01", attribution="@creator",
+                             expires_at=future, monetization_allowed=1)
+    assert rights.check(store, "c3") == (True, "verified")
+    past = (date.today() - timedelta(days=1)).isoformat()
+    rights.upsert_permission(store, "c3", "verified", permission_source="written licence",
+                             permission_date="2026-11-01", attribution="@creator",
+                             expires_at=past, monetization_allowed=1)
+    ok, reason = rights.check(store, "c3")
+    assert not ok and "expired" in reason
+
+
+def test_monetization_must_be_granted(store):
+    rights.upsert_permission(store, "c4", "verified", permission_source="s", permission_date="2026-11-01",
+                             attribution="a", expires_at="2099-01-01", monetization_allowed=0)
+    ok, reason = rights.check(store, "c4")
+    assert not ok and "monetization" in reason
+
+
+# ------------------------------------------------------------ quota
+def test_quota_blocks_calls_that_do_not_fit(store):
+    q = QuotaLedger(store, {"daily_budget_units": 1000, "safety_margin": 1.0, "costs": {"videos.insert": 1600}})
+    with pytest.raises(QuotaExceeded):
+        q.spend("videos.insert")
+    assert q.used_today() == 0  # nothing reserved for a call that was refused
+
+
+def test_external_usage_is_counted_for_its_day(store):
+    cfg = copy.deepcopy(CFG["quota"])
+    cfg["external_units_by_day"] = {"2026-11-18": 8000}
+    q = QuotaLedger(store, cfg)
+    assert q.external_used("2026-11-18") == 8000
+    assert q.remaining_today("2026-11-18") == 9000 - 8000
+    assert q.external_used("2026-11-19") == 0
+
+
+def test_publish_blocked_when_quota_cannot_fit_upload(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(publisher, "load_facts", lambda: [{"id": "f1", "primary_source_checked": True}])
+    rights.upsert_permission(store, "self:bounce-rumble", "verified", permission_source="own work",
+                             permission_date="2026-11-18", attribution="own", expires_at="2099-01-01",
+                             monetization_allowed=1)
+    _add_fake_short(store, tmp_path, fact_ids=("f1",))
+    # Today's real budget: 9000 usable - 8000 used by the daily job = 1000, below one 1600-unit upload.
+    tight = copy.deepcopy(CFG["quota"])
+    tight["external_units_by_day"] = {date.today().isoformat(): 8000}
+    res = publisher.publish_one(store, FakeYT(store, quota_cfg=tight), copy.deepcopy(CFG), "k:1:75", live=True)
+    assert res["result"] == "blocked" and "quota" in res["reason"]
+
+
+def test_unknown_method_has_no_cost(store):
+    q = QuotaLedger(store, CFG["quota"])
+    with pytest.raises(KeyError):
+        q.cost("made.up.method")
+
+
+# ------------------------------------------------------------ store / dedupe
+def test_jobs_are_inserted_once(store):
+    assert store.enqueue_job("publish:x", "publish", {}) is True
+    assert store.enqueue_job("publish:x", "publish", {}) is False
+
+
+def test_restart_recovers_running_jobs(store):
+    store.enqueue_job("scan:1", "scan")
+    store.execute("UPDATE jobs SET status='running' WHERE job_key='scan:1'")
+    assert store.requeue_stale_running() == 1
+    assert store.fetchone("SELECT status FROM jobs WHERE job_key='scan:1'")["status"] == "queued"
+
+
+# ------------------------------------------------------------ scoring
+def test_missing_signals_are_excluded_not_fatal():
+    res = scoring.compute({"view_velocity": 0.8, "chat_spike": None, "replay_heatmap": None})
+    assert res["score"] == 80.0
+    assert res["confidence"] == pytest.approx(0.2, abs=1e-3)
+
+
+def test_no_signals_gives_no_score():
+    assert scoring.compute({})["score"] is None
+
+
+def test_score_in_range_and_weighted():
+    res = scoring.compute({k: 1.0 for k in scoring.WEIGHTS})
+    assert res["score"] == 100.0 and res["confidence"] == 1.0
+    res = scoring.compute({k: 0.0 for k in scoring.WEIGHTS})
+    assert res["score"] == 0.0
+
+
+def test_velocity_and_acceleration_normalization():
+    assert scoring.normalize_velocity(0) == 0
+    assert scoring.normalize_velocity(1e9) == 1.0
+    assert scoring.normalize_acceleration(100, 100) == 0
+    assert scoring.normalize_acceleration(100, 500) == 1.0
+    assert scoring.normalize_acceleration(None, 500) is None
+
+
+def test_signals_from_samples_needs_points():
+    sig = scoring.signals_from_samples([(0, 100), (1, 1000), (2, 3000)], likes=50, comments=10, views=3000)
+    assert sig["view_velocity"] is not None and sig["view_acceleration"] is not None
+    assert sig["engagement"] == pytest.approx(60 / 3000 / 0.08, rel=1e-3)
+    assert scoring.signals_from_samples([], None, None, None)["view_velocity"] is None
+
+
+# ------------------------------------------------------------ discovery
+def test_youtube_scan_dedupes_and_snapshots(store):
+    video_item = {"id": "abc123", "snippet": {"title": "GTA chase", "channelId": "UCx"},
+                  "statistics": {"viewCount": "1000", "likeCount": "50", "commentCount": "5"},
+                  "liveStreamingDetails": {}}
+    responses = {
+        ("search", "list"): lambda kw: {"items": [{"id": {"videoId": "abc123"}}]},
+        ("videos", "list"): lambda kw: {"items": [video_item]},
+    }
+    yt = FakeYT(store, responses)
+    discovery.youtube_scan(store, yt, ["GTA 6 chase"], 25)
+    discovery.youtube_scan(store, yt, ["GTA 6 chase"], 25)  # same video again
+    rows = store.fetchall("SELECT * FROM candidates")
+    assert len(rows) == 1 and rows[0]["id"] == "youtube:abc123"
+    assert store.fetchone("SELECT COUNT(*) AS n FROM snapshots")["n"] >= 1
+    assert yt.quota.used_today() == 2 * (100 + 1)  # search + videos.list per scan
+
+
+class FakeTwitchSession:
+    def __init__(self):
+        self.calls = []
+
+    def post(self, url, **kw):
+        return _Resp({"access_token": "t"})
+
+    def get(self, url, params=None, headers=None, **kw):
+        self.calls.append(url)
+        if url.endswith("search/categories"):
+            return _Resp({"data": [{"id": "999", "name": "Grand Theft Auto VI"}]})
+        return _Resp({"data": [{"id": "s1", "user_id": "u1", "user_login": "streamer", "title": "heist",
+                                "viewer_count": 1234}]})
+
+
+class _Resp:
+    def __init__(self, data):
+        self._d = data
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._d
+
+
+def test_twitch_scan_with_mocked_session(store):
+    tw = discovery.TwitchClient("id", "secret", session=FakeTwitchSession())
+    assert discovery.twitch_scan(store, tw, "Grand Theft Auto VI", 50) == 1
+    row = store.fetchone("SELECT * FROM candidates WHERE id='twitch:s1'")
+    assert row["is_live"] == 1 and row["creator_id"] == "twitch-user:u1"
+
+
+def test_twitch_skipped_without_credentials(monkeypatch):
+    monkeypatch.delenv("TWITCH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("TWITCH_CLIENT_SECRET", raising=False)
+    assert discovery.TwitchClient.from_env() is None
+
+
+# ------------------------------------------------------------ templates & facts
+def test_countdown_plan_structure():
+    facts = templates.load_facts()
+    plan = templates.countdown_plan(1, facts)
+    assert 20 <= plan["duration_s"] <= 45
+    assert plan["hook"] == ["1 DAY", "TO GTA VI"]
+    assert plan["fact_ids"] == [f["id"] for f in facts]
+    assert all(s["sources"] for s in plan["sources"] and facts)
+
+
+def test_every_fact_has_sources():
+    for f in templates.load_facts():
+        assert f["sources"], f["id"]
+        assert all(s["url"].startswith("https://") for s in f["sources"])
+
+
+# ------------------------------------------------------------ publisher
+def _add_fake_short(store, tmp_path, quality=75, fact_ids=("launch_date_2026_11_19",), creator="self:bounce-rumble"):
+    d = tmp_path / "short"
+    d.mkdir(exist_ok=True)
+    video = d / "countdown.mp4"
+    video.write_bytes(b"not really a video")
+    return publisher.add_short(store, source_key=f"k:{len(fact_ids)}:{quality}", template="t", title="T",
+                               description="D", tags=["a"], file_path=str(video), duration_s=21,
+                               quality_score=quality, creator_id=creator, fact_ids=list(fact_ids))
+
+
+def test_short_blocked_when_facts_unchecked(store, tmp_path):
+    rights.upsert_permission(store, "self:bounce-rumble", "verified", permission_source="own work",
+                             permission_date="2026-11-18", attribution="own", expires_at="2099-01-01",
+                             monetization_allowed=1)
+    _add_fake_short(store, tmp_path)
+    yt = FakeYT(store)
+    cfg = copy.deepcopy(CFG)
+    cfg["publishing"]["enabled"] = True
+    cfg["publishing"]["dry_run"] = False
+    res = publisher.publish_one(store, yt, cfg, "k:1:75", live=True)
+    assert res["result"] == "blocked" and "primary source" in res["reason"]
+
+
+def test_pending_rights_block_even_with_checked_facts(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(templates, "load_facts", lambda: [{"id": "f1", "primary_source_checked": True}])
+    monkeypatch.setattr(publisher, "load_facts", lambda: [{"id": "f1", "primary_source_checked": True}])
+    rights.upsert_permission(store, "creatorZ", "pending")
+    _add_fake_short(store, tmp_path, fact_ids=("f1",), creator="creatorZ")
+    res = publisher.publish_one(store, FakeYT(store), copy.deepcopy(CFG), "k:1:75", live=True)
+    assert res["result"] == "blocked" and "rights" in res["reason"]
+
+
+def test_dry_run_never_uploads(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(publisher, "load_facts", lambda: [{"id": "f1", "primary_source_checked": True}])
+    rights.upsert_permission(store, "self:bounce-rumble", "verified", permission_source="own work",
+                             permission_date="2026-11-18", attribution="own", expires_at="2099-01-01",
+                             monetization_allowed=1)
+    _add_fake_short(store, tmp_path, fact_ids=("f1",))
+    called = []
+    monkeypatch.setattr(publisher, "upload", lambda *a, **k: called.append(1) or "vid")
+    res = publisher.publish_one(store, FakeYT(store), copy.deepcopy(CFG), "k:1:75", live=True)
+    assert res["result"] == "dry_run" and called == []
+
+
+def test_live_publish_uploads_once_and_adds_to_playlist(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(publisher, "load_facts", lambda: [{"id": "f1", "primary_source_checked": True}])
+    rights.upsert_permission(store, "self:bounce-rumble", "verified", permission_source="own work",
+                             permission_date="2026-11-18", attribution="own", expires_at="2099-01-01",
+                             monetization_allowed=1)
+    _add_fake_short(store, tmp_path, fact_ids=("f1",))
+    cfg = copy.deepcopy(CFG)
+    cfg["publishing"]["enabled"] = True
+    cfg["publishing"]["dry_run"] = False
+    cfg["playlist"]["playlist_id"] = "PLtest"
+    uploads = []
+    monkeypatch.setattr(publisher, "upload", lambda yt, s, c: uploads.append(s["source_key"]) or "VID1")
+    inserted = []
+    responses = {
+        ("playlistItems", "insert"): lambda kw: inserted.append(kw["body"]["snippet"]["resourceId"]["videoId"]) or {},
+        # Default config privacy is "private" (owner reviews before going public), so verify against it.
+        ("videos", "list"): lambda kw: {"items": [{"status": {"privacyStatus": cfg["publishing"]["privacy_status"]}}]},
+    }
+    yt = FakeYT(store, responses)
+    res = publisher.publish_one(store, yt, cfg, "k:1:75", live=True)
+    assert res["result"] == "published" and res["youtube_id"] == "VID1" and res["verified"] is True
+    assert inserted == ["VID1"]
+    # A second run must not upload again.
+    again = publisher.publish_one(store, yt, cfg, "k:1:75", live=True)
+    assert again["result"] == "already_published" and uploads == ["k:1:75"]
+
+
+def test_daily_cap_blocks_extra_publishes(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(publisher, "load_facts", lambda: [{"id": "f1", "primary_source_checked": True}])
+    rights.upsert_permission(store, "self:bounce-rumble", "verified", permission_source="own work",
+                             permission_date="2026-11-18", attribution="own", expires_at="2099-01-01",
+                             monetization_allowed=1)
+    cfg = copy.deepcopy(CFG)
+    cfg["publishing"]["max_shorts_per_day"] = 1
+    store.execute("INSERT INTO shorts (source_key, status, updated_at, creator_id) VALUES ('old','published',?, 'x')",
+                  (publisher.now_iso(),))
+    _add_fake_short(store, tmp_path, fact_ids=("f1",))
+    ok, reason = publisher.eligibility(store, cfg, store.fetchone("SELECT * FROM shorts WHERE source_key='k:1:75'"),
+                                       FakeYT(store).quota)
+    assert not ok and "daily cap" in reason
+
+
+def test_schedule_slots_are_future_and_ordered():
+    cfg = copy.deepcopy(CFG)
+    slots = publisher.schedule_slots(cfg, 4)
+    assert len(slots) == 4 and slots == sorted(slots)
+
+
+# ------------------------------------------------------------ render
+def test_render_countdown_meets_spec(tmp_path):
+    from gta.render import render
+
+    plan = templates.countdown_plan(1, templates.load_facts())
+    info = render(plan, tmp_path / "out.mp4", tmp_path / "work", CFG)
+    assert (info["width"], info["height"]) == (1080, 1920)
+    assert 20 <= info["duration_s"] <= 45
+    assert info["audio_codec"] == "aac"
+    assert abs(float(info["loudness"]["input_i"]) + 14) < 1.5
+
+
+def test_render_rejects_out_of_range_duration(tmp_path):
+    from gta.render import RenderError, render
+
+    plan = templates.countdown_plan(1, templates.load_facts())
+    plan["duration_s"] = 10
+    with pytest.raises(RenderError):
+        render(plan, tmp_path / "x.mp4", tmp_path / "w", CFG)

@@ -1,0 +1,29 @@
+# systemd unit for the GTA VI Shorts worker (24/7). Install on the host that runs the pipeline:
+#   sudo cp gta-worker.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#   sudo systemctl enable --now gta-worker
+# Secrets are read from an environment file OUTSIDE the repository (never commit it):
+#   /etc/bounce-rumble/gta.env   containing YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN,
+#   and optionally TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET.
+[Unit]
+Description=Bounce Rumble GTA VI Shorts worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bounce-rumble
+EnvironmentFile=/etc/bounce-rumble/gta.env
+Environment=GTA_STATE_DIR=/var/lib/bounce-rumble/state
+Environment=GTA_RENDER_DIR=/var/lib/bounce-rumble/renders
+ExecStart=/usr/bin/python3 -m gta.runner loop
+# Publishing stays in dry-run unless config.json has publishing.enabled=true and dry_run=false
+# AND the unit is started with --live (edit ExecStart to add --live when ready).
+Restart=always
+RestartSec=20
+KillSignal=SIGTERM
+TimeoutStopSec=120
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

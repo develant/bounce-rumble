@@ -1,0 +1,6 @@
+gta/state/
+gta/renders/
+gta/work/
+__pycache__/
+*.pyc
+.pytest_cache/

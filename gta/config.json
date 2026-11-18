@@ -1,0 +1,81 @@
+{
+  "channel": {
+    "id": "UCUobFUu1jd_np5iFaBoW75g",
+    "name": "Bounce Rumble",
+    "custom_url": "@bouncerumble",
+    "disclaimer": "Bounce Rumble is an independent channel. It is not affiliated with, endorsed by or sponsored by Rockstar Games or Take-Two Interactive."
+  },
+  "playlist": {
+    "title": "GTA VI — Best Moments & Epic Clips",
+    "privacy_status": "public",
+    "playlist_id": "PLSUFwwws2vtE"
+  },
+  "quota": {
+    "daily_budget_units": 10000,
+    "safety_margin": 0.9,
+    "external_units_by_day": {
+      "2026-11-18": 8000
+    },
+    "costs": {
+      "videos.insert": 1600,
+      "videos.update": 50,
+      "videos.list": 1,
+      "search.list": 100,
+      "channels.list": 1,
+      "channels.update": 50,
+      "channelBanners.insert": 50,
+      "playlists.list": 1,
+      "playlists.insert": 50,
+      "playlistItems.list": 1,
+      "playlistItems.insert": 50
+    }
+  },
+  "publishing": {
+    "enabled": false,
+    "dry_run": true,
+    "max_shorts_per_day": 7,
+    "target_shorts_per_day": 5,
+    "min_quality_score": 60,
+    "privacy_status": "private",
+    "category_id": "20",
+    "default_language": "en",
+    "upload_retry_limit": 5,
+    "schedule_utc_hours": [
+      14,
+      18,
+      22
+    ]
+  },
+  "discovery": {
+    "scan_interval_minutes": 360,
+    "refresh_interval_minutes": 60,
+    "youtube_queries": [
+      "GTA 6 gameplay live",
+      "GTA VI live stream",
+      "GTA 6 chase live"
+    ],
+    "youtube_search_max_results": 25,
+    "twitch": {
+      "enabled_without_credentials": false,
+      "category_name": "Grand Theft Auto VI",
+      "max_streams": 50
+    }
+  },
+  "render": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "min_seconds": 20,
+    "max_seconds": 45,
+    "loudness_lufs": -14,
+    "true_peak_db": -1.5,
+    "font_bold": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "font_regular": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+  },
+  "content": {
+    "launch_date": "2026-11-19",
+    "timezone": "America/Los_Angeles",
+    "self_creator_id": "self:bounce-rumble",
+    "min_days_before_launch_to_publish_countdown": -1
+  }
+}
