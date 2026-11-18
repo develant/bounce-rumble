@@ -177,3 +177,51 @@ def twitch_scan(store, client, category_name, max_streams=50):
         record_snapshot_and_score(store, cid, views=None, concurrent=int(s.get("viewer_count", 0)))
         n += 1
     return n
+
+
+# ---------------------------------------------------------------- trending and creators
+def trending_gaming(store, yt, region="US", max_results=50):
+    """Most-popular Gaming (category 20) videos for a region. One videos.list call (1 shared unit)."""
+    data = yt.request(
+        "videos.list",
+        yt.service.videos().list(part="snippet,statistics,liveStreamingDetails", chart="mostPopular",
+                                 videoCategoryId="20", regionCode=region, maxResults=min(max_results, 50)),
+    )
+    n = 0
+    for v in data.get("items", []):
+        vid = v["id"]
+        sn = v["snippet"]
+        st = v.get("statistics", {})
+        cid = f"youtube:{vid}"
+        upsert_candidate(store, cid, "youtube", f"youtube-channel:{sn['channelId']}", sn["title"],
+                         f"https://www.youtube.com/watch?v={vid}", False)
+        store.execute("UPDATE candidates SET status='trending' WHERE id=? AND status IN ('new','scored')", (cid,))
+        record_snapshot_and_score(store, cid, views=int(st.get("viewCount", 0)),
+                                  likes=int(st["likeCount"]) if "likeCount" in st else None,
+                                  comments=int(st["commentCount"]) if "commentCount" in st else None)
+        n += 1
+    return n
+
+
+def creator_rollup(store, min_videos=2):
+    """Creators with repeated high-scoring candidates. Read-only; for ranking discovery, not for rights."""
+    return store.fetchall(
+        "SELECT creator_id, COUNT(*) AS videos, ROUND(AVG(score),1) AS avg_score, MAX(score) AS best_score"
+        " FROM candidates WHERE score IS NOT NULL AND creator_id IS NOT NULL"
+        " GROUP BY creator_id HAVING COUNT(*) >= ? ORDER BY avg_score DESC LIMIT 50",
+        (min_videos,),
+    )
+
+
+def emerging(store, min_growth=2.0):
+    """Candidates whose views at least doubled between their two latest snapshots."""
+    rows = store.fetchall(
+        "SELECT s.candidate_id, s.views, s.ts FROM snapshots s WHERE s.views IS NOT NULL ORDER BY s.candidate_id, s.ts")
+    by = {}
+    for r in rows:
+        by.setdefault(r["candidate_id"], []).append(r["views"])
+    out = []
+    for cid, vals in by.items():
+        if len(vals) >= 2 and vals[-2] > 0 and vals[-1] / vals[-2] >= min_growth:
+            out.append({"candidate_id": cid, "growth": round(vals[-1] / vals[-2], 2), "views": vals[-1]})
+    return sorted(out, key=lambda x: -x["growth"])

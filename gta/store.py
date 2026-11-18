@@ -108,6 +108,13 @@ CREATE TABLE IF NOT EXISTS sources (
     acquisition TEXT NOT NULL,                     -- owned | creator_file | metadata_only
     added_at TEXT
 );
+CREATE TABLE IF NOT EXISTS fingerprints (
+    source_key TEXT PRIMARY KEY,
+    source_id TEXT,
+    start_s REAL,
+    end_s REAL,
+    dhash TEXT
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
