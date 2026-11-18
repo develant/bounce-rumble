@@ -115,6 +115,21 @@ CREATE TABLE IF NOT EXISTS fingerprints (
     end_s REAL,
     dhash TEXT
 );
+CREATE TABLE IF NOT EXISTS authorizations (
+    creator_id TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    scope_name TEXT NOT NULL,
+    status TEXT NOT NULL,                          -- granted | revoked
+    granted_at TEXT,
+    updated_at TEXT,
+    PRIMARY KEY (creator_id, scope_name)
+);
+CREATE TABLE IF NOT EXISTS chat_buckets (
+    video_id TEXT NOT NULL,
+    bucket_ts INTEGER NOT NULL,                    -- start of a 10 s bucket (epoch seconds)
+    messages INTEGER NOT NULL,
+    PRIMARY KEY (video_id, bucket_ts)
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,

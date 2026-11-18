@@ -133,3 +133,46 @@ The 364 shared units include 50 per playlist add (`playlistItems.insert`) and 1 
 
 **Tests.** `tests/test_clip.py` covers moment detection (the loud-burst case, and the minimum gap between highlights) and the registration rules (metadata-only sources rejected, creator required). End-to-end rendering was run once on a synthetic generated source for testing only. That source and its output are not published.
 
+## Source discovery and acquisition (added 2026-11-18)
+
+**Where footage can come from (the end-to-end answer).**
+- **Twitch clips, official download (`gta/sources/twitch.py`, `gta/authz.py`).** Discovery uses Helix Get Clips for the game (app token, no creator involved). A clip file is downloaded only through `clips/download` with the *creator's* OAuth user token. Each creator authorizes separately (`gta.authz connect-twitch` / `complete-twitch`). Without authorization a clip stays discovered and ranked (`ranked_no_file`); nothing is blocked globally.
+- **YouTube live streams (`gta/sources/youtube_live.py`).** Used as a trend and discovery source only: `search.list` with `eventType=live`, `videos.list` for concurrency, and `liveChatMessages` for chat spikes (messages counted in 10 s buckets and compared with the stream's own median). No video is downloaded from YouTube.
+- **Owner recordings (`gta/ingest.py`, `ingest_owner_folder`).** Every `.mp4` in `gta/ingest/owner/` is registered as an owned source for `self:bounce-rumble`, idempotently.
+- **Creator-supplied files.** Registered with `acquisition=creator_file`.
+
+**Pipeline.** Discovery -> popularity/velocity scoring (`scoring.popularity_score`, `velocity_per_hour`) -> acquisition if authorized or local -> the existing local clip pipeline (audio, visual, moment scoring, QC, fingerprint, queue). Each stage is independent. Authorization enables *downloading only*. Publishing still needs a verified permission record (`rights.py`), and the publisher's gate is unchanged.
+
+**Tests.** `tests/test_sources.py` (10 tests): pagination, download URL parsing, per-creator authorization independence, token file permissions, unauthorized creators stay ranked, authorized creators download and register, chat spike detection, owner ingest idempotency, each source processed once. All use fakes; no network.
+
+**Status of each piece**
+
+| Piece | Status |
+|---|---|
+| Twitch Get Clips discovery | Implemented, tested with fakes. **Not run live**: no `TWITCH_CLIENT_ID`/`TWITCH_CLIENT_SECRET` in this environment. |
+| Twitch OAuth (per creator) | Implemented (auth URL, code exchange, refresh, per-creator token files, revocation). Live test needs a Twitch app and a creator to approve it. |
+| Twitch `clips/download` | Implemented. **Unverified**: the request path (`/helix/clips/download?id=`) and response fields (`landscape_download_url`, `portrait_download_url`) come from a community forum post, and the required scope (`channel:manage:clips`, configured) could not be checked against Twitch's reference. Confirm against the live API before relying on it. |
+| YouTube live discovery | Implemented, tested with fakes. Not run live (uses quota; not run in this session). |
+| Chat spike detection | Implemented on recorded buckets, tested. Requires a live `liveChatId` and recording while the stream is live. |
+| Velocity and popularity | Implemented and tested (single snapshot: confidence 0.5). |
+| Owner recording ingest | Implemented and tested. Put `.mp4` files in `gta/ingest/owner/`. |
+| Local clip pipeline | Existing, with two fixes: the hook is limited to the clip length (an unlimited looped image plus `-shortest` never finished), and loudness uses a linear two-pass correction (single-pass gave -12 LUFS on short clips). |
+| End-to-end clip on synthetic source | Done: 20.0 s, 1080x1920, AAC, -13.99 LUFS, framing and subtitle QC pass. Rendering takes about 17 s per 20 s clip. The file is a test output and not published. |
+
+**Rockstar fan-content policy: what I could verify.** `support.rockstargames.com` is reachable only intermittently from this environment (the tunnel opens, then the origin closes the connection), so the page could not be read directly. From the search summary of Rockstar's "Policy on posting copyrighted Rockstar Games material" (page last updated 10 January 2025, per the summary):
+- Fan gameplay videos on YouTube are allowed for **non-commercial** use, without spoilers.
+- Playthroughs and narrated let's plays may include cutscenes. Videos made only of cutscenes are removed.
+- Spoiler and early-unboxing videos and online cheating content are prohibited.
+- Rockstar and 2K may review videos case by case and remove them even when they comply.
+- Rockstar may change the policy at any time.
+
+**What this means for monetization.** Non-commercial fan videos are the permitted case. A monetized Short built from GTA VI footage is not covered by that policy. It is a gray area that can trigger Content ID claims or removal, even when the source creator has authorized the download. Creator authorization covers only the creator's own recording. The game's visuals and music remain Rockstar's. Before any monetized publication of game footage, read the current page directly (once the host is reachable) and decide whether to get written terms from Rockstar. Until then, footage-based content should stay non-monetized or be kept out of automatic publication.
+
+**Actions needed from you**
+1. Create a free Twitch developer application and provide `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` (use the secret store; do not paste them in chat).
+2. Confirm the Twitch `clips/download` request and scope on the live reference, or allow me to test it with your own authorized channel.
+3. Open the Rockstar policy page in a browser, and confirm or correct the summary above.
+4. Put your own recordings in `gta/ingest/owner/`.
+
+**Network.** The environment allowlist now includes `id.twitch.tv`, `api.twitch.tv`, and `support.rockstargames.com`. This change was approved through the environment tool and applies to all future sessions that use it.
+

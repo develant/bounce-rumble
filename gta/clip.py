@@ -72,10 +72,23 @@ def make_clip(src, start, end, out_path, work_dir, cfg, hook, captions, attribut
     )
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    _ff(["-ss", str(start), "-t", str(dur), "-i", str(src), "-loop", "1", "-framerate", str(FPS), "-i", str(hk),
+    # The hook is a still image, so it is limited to the clip length with -t (an unlimited looped
+    # input plus -shortest kept ffmpeg running indefinitely).
+    raw = out.with_name(out.stem + ".raw.mp4")
+    _ff(["-ss", str(start), "-t", str(dur), "-i", str(src), "-loop", "1", "-framerate", str(FPS), "-t", str(dur), "-i", str(hk),
          "-filter_complex", vf, "-map", "[v]", "-map", "[a]", "-r", str(FPS),
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-shortest", str(out)], cwd=work)
+         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-t", str(dur), str(raw)], cwd=work)
+    # Second pass: single-pass loudnorm is approximate on short clips, so measure and correct the whole file.
+    meas = measure_loudness(raw)
+    if not meas:
+        raise RenderError("loudness measurement failed")
+    lin = (f"loudnorm=I={r['loudness_lufs']}:TP={r['true_peak_db']}:LRA=11:"
+           f"measured_I={meas['input_i']}:measured_TP={meas['input_tp']}:measured_LRA={meas['input_lra']}:"
+           f"measured_thresh={meas['input_thresh']}:offset={meas['target_offset']}:linear=true")
+    _ff(["-i", str(raw), "-af", lin, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+         "-movflags", "+faststart", str(out)])
+    raw.unlink(missing_ok=True)
     info = probe(out)
     if (info["width"], info["height"]) != (W, H):
         raise RenderError(f"size {info['width']}x{info['height']}")

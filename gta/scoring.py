@@ -73,3 +73,27 @@ def signals_from_samples(samples, likes=None, comments=None, views=None):
             out["view_acceleration"] = normalize_acceleration(prev_vel, vel)
     out["engagement"] = normalize_engagement(likes, comments, views)
     return out
+
+
+def velocity_per_hour(samples):
+    """samples: list of (epoch_seconds, views) ascending. Views per hour between the two newest samples."""
+    if len(samples) < 2:
+        return None
+    (t0, v0), (t1, v1) = samples[-2], samples[-1]
+    hours = max((t1 - t0) / 3600.0, 1e-6)
+    return max(0.0, (v1 - v0) / hours)
+
+
+def popularity_score(views, velocity=None):
+    """0-100 popularity from total views (log-scaled) and recent velocity.
+
+    If velocity is unknown (one snapshot only), the score uses views alone and reports confidence 0.5.
+    """
+    import math
+
+    v = _clamp(math.log10(1 + max(views or 0, 0)) / math.log10(1 + 1_000_000))
+    vel = normalize_velocity(velocity) if velocity is not None else None
+    if vel is None:
+        return {"score": round(100 * v, 1), "confidence": 0.5, "used": {"views": v}}
+    return {"score": round(100 * (0.5 * v + 0.5 * vel), 1), "confidence": 1.0,
+            "used": {"views": v, "velocity": vel}}

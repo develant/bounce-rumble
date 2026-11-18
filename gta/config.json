@@ -128,5 +128,25 @@
     "timezone": "America/Los_Angeles",
     "self_creator_id": "self:bounce-rumble",
     "min_days_before_launch_to_publish_countdown": -1
+  },
+  "twitch": {
+    "game_name": "Grand Theft Auto VI",
+    "game_name_fallback": "Grand Theft Auto V",
+    "discovery_window_days": 7,
+    "max_clips_per_scan": 200,
+    "redirect_uri": "http://localhost:8765/callback",
+    "download_scopes": [
+      "channel:manage:clips"
+    ],
+    "download_scope_note": "UNVERIFIED: scope for Get Clips Download to be checked against the live Twitch reference"
+  },
+  "live": {
+    "chat_bucket_s": 10,
+    "spike_min_messages": 20,
+    "spike_ratio": 3.0,
+    "search_queries": [
+      "GTA 6 live",
+      "GTA VI gameplay live"
+    ]
   }
 }

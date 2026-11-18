@@ -312,7 +312,9 @@ def _add_fake_short(store, tmp_path, quality=75, fact_ids=("launch_date_2026_11_
                                quality_score=quality, creator_id=creator, fact_ids=list(fact_ids))
 
 
-def test_short_blocked_when_facts_unchecked(store, tmp_path):
+def test_short_blocked_when_facts_unchecked(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(publisher, "load_facts", lambda: [{"id": "launch_date_2026_11_19", "primary_source_checked": False},
+                                                          {"id": "platforms_ps5_xbox_series", "primary_source_checked": False}])
     rights.upsert_permission(store, "self:bounce-rumble", "verified", permission_source="own work",
                              permission_date="2026-11-18", attribution="own", expires_at="2099-01-01",
                              monetization_allowed=1)
@@ -335,6 +337,7 @@ def test_pending_rights_block_even_with_checked_facts(store, tmp_path, monkeypat
 
 
 def test_dry_run_never_uploads(store, tmp_path, monkeypatch):
+    # Hermetic: force dry-run regardless of the live config.
     monkeypatch.setattr(publisher, "load_facts", lambda: [{"id": "f1", "primary_source_checked": True}])
     rights.upsert_permission(store, "self:bounce-rumble", "verified", permission_source="own work",
                              permission_date="2026-11-18", attribution="own", expires_at="2099-01-01",
@@ -342,7 +345,9 @@ def test_dry_run_never_uploads(store, tmp_path, monkeypatch):
     _add_fake_short(store, tmp_path, fact_ids=("f1",))
     called = []
     monkeypatch.setattr(publisher, "upload", lambda *a, **k: called.append(1) or "vid")
-    res = publisher.publish_one(store, FakeYT(store), copy.deepcopy(CFG), "k:1:75", live=True)
+    dry = copy.deepcopy(CFG)
+    dry["publishing"]["dry_run"] = True
+    res = publisher.publish_one(store, FakeYT(store), dry, "k:1:75", live=True)
     assert res["result"] == "dry_run" and called == []
 
 
