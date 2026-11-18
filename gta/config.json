@@ -11,23 +11,74 @@
     "playlist_id": "PLSUFwwws2vtE"
   },
   "quota": {
-    "daily_budget_units": 10000,
+    "model": "owner_stated_2026-11-18 (UNVERIFIED: official docs unreachable from this environment; sources conflict)",
     "safety_margin": 0.9,
-    "external_units_by_day": {
-      "2026-11-18": 8000
+    "buckets": {
+      "uploads": {
+        "daily_limit": 100,
+        "what": "videos.insert calls per day"
+      },
+      "search": {
+        "daily_limit": 100,
+        "what": "search.list calls per day"
+      },
+      "shared": {
+        "daily_limit": 10000,
+        "what": "units per day for all other methods"
+      }
     },
-    "costs": {
-      "videos.insert": 1600,
-      "videos.update": 50,
-      "videos.list": 1,
-      "search.list": 100,
-      "channels.list": 1,
-      "channels.update": 50,
-      "channelBanners.insert": 50,
-      "playlists.list": 1,
-      "playlists.insert": 50,
-      "playlistItems.list": 1,
-      "playlistItems.insert": 50
+    "methods": {
+      "videos.insert": {
+        "bucket": "uploads",
+        "units": 1
+      },
+      "search.list": {
+        "bucket": "search",
+        "units": 1
+      },
+      "videos.list": {
+        "bucket": "shared",
+        "units": 1
+      },
+      "channels.list": {
+        "bucket": "shared",
+        "units": 1
+      },
+      "playlists.list": {
+        "bucket": "shared",
+        "units": 1
+      },
+      "playlistItems.list": {
+        "bucket": "shared",
+        "units": 1
+      },
+      "videos.update": {
+        "bucket": "shared",
+        "units": 50
+      },
+      "channels.update": {
+        "bucket": "shared",
+        "units": 50
+      },
+      "channelBanners.insert": {
+        "bucket": "shared",
+        "units": 50
+      },
+      "playlists.insert": {
+        "bucket": "shared",
+        "units": 50
+      },
+      "playlistItems.insert": {
+        "bucket": "shared",
+        "units": 50
+      }
+    },
+    "external_usage_by_day": {
+      "2026-11-18": {
+        "uploads": 5,
+        "search": 0,
+        "shared": 15
+      }
     }
   },
   "publishing": {

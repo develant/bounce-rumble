@@ -94,3 +94,31 @@ Maintenance and recent-activity checks were not done: this session has no GitHub
 
 - The daily job and this pipeline share one quota pool. Both must be managed together.
 - The brief says "5 to 7 Shorts a day". The conservative cost supports only about 5 uploads a day, and only when no other job uses the quota. Quality gates take priority over the number.
+
+## Quota model (revised 2026-11-18)
+
+Previous versions assumed 1600 units per `videos.insert` in one pool. That is replaced by three buckets, with the values in `gta/config.json` marked **unverified**:
+
+| Bucket | Limit/day | Methods |
+|---|---|---|
+| uploads | 100 calls | `videos.insert` (1 per call) |
+| search | 100 calls | `search.list` (1 per call) |
+| shared | 10,000 units | everything else (per-method units in config) |
+
+**Verification status.** `developers.google.com` is blocked by this environment's egress proxy (HTTP 403), so the official cost table and revision history could not be read. Secondary sources disagree on `videos.insert` (1, 100 or 1600 units) and on `search.list` (1 or 100). The owner's model is the one used here. Google's Cloud Console quota page for the project could not be read either: Service Usage returned 404 with the OAuth token.
+
+**Daily job audit (`develant/youtube`, `pipeline/`).** Calls per day: `videos.insert` once per video (5), `videos.list` read-back once per video (5), `channels.list` and `playlistItems.list` pages for analytics (about 3–4), and `videos.update` only in lockcheck or deliver paths (0 on normal days). The analytics reports call is a separate API. The daily job's code still uses `INSERT_COST = 1600` for its own estimate, which is a leftover assumption. Under the owner's model it uses 5/100 upload calls and roughly 10–15 shared units per day.
+
+**Feasibility for 5–7 Shorts per day (`plan_day`):**
+
+| Model | Shorts/day | uploads | search (3 queries) | shared |
+|---|---|---|---|---|
+| owner's model | 5 | 5/85 fits | 3/90 fits | 364/8985 fits |
+| owner's model | 7 | 7/85 fits | 3/90 fits | 364/8985 fits |
+| 1600 units per upload (legacy, shared pool) | 5 | — | — | 8364 needed, 1000 left: does not fit |
+
+The 364 shared units include 50 per playlist add (`playlistItems.insert`) and 1 per verify read. Under the owner's model, 5–7 Shorts a day is feasible with the quota far from the limit. Under the legacy model it is not.
+
+**Monitoring.** `QuotaLedger` tracks all three buckets separately. `remaining()` and `summary()` report usable, external, used and remaining per bucket. `spend()` refuses a call that does not fit its bucket. `plan_day()` checks a whole day before any run. Config has `external_usage_by_day` per bucket, which must be filled in from the daily job's real usage.
+
+**Still open:** read the real limits and per-method costs in Cloud Console (YouTube Data API v3 → Quotas) and compare with `gta/config.json`. The daily job's quota is outside this ledger, and it adds to the `external_usage_by_day` estimate.

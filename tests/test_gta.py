@@ -72,7 +72,7 @@ class FakeYT:
         # External usage is zeroed here so tests exercise publishing logic, not today's real budget.
         qc = copy.deepcopy(quota_cfg or CFG["quota"])
         if quota_cfg is None:
-            qc["external_units_by_day"] = {}
+            qc["external_usage_by_day"] = {}
         self.quota = QuotaLedger(store, qc)
         self.service = FakeService(responses or {})
 
@@ -121,33 +121,58 @@ def test_monetization_must_be_granted(store):
 
 
 # ------------------------------------------------------------ quota
-def test_quota_blocks_calls_that_do_not_fit(store):
-    q = QuotaLedger(store, {"daily_budget_units": 1000, "safety_margin": 1.0, "costs": {"videos.insert": 1600}})
-    with pytest.raises(QuotaExceeded):
+def _tight_quota(shared_limit=1000, uploads_limit=100, search_limit=100, external=None):
+    q = copy.deepcopy(CFG["quota"])
+    q["safety_margin"] = 1.0
+    q["buckets"]["shared"]["daily_limit"] = shared_limit
+    q["buckets"]["uploads"]["daily_limit"] = uploads_limit
+    q["buckets"]["search"]["daily_limit"] = search_limit
+    q["external_usage_by_day"] = external or {}
+    return q
+
+
+def test_shared_quota_blocks_calls_that_do_not_fit(store):
+    q = QuotaLedger(store, _tight_quota(shared_limit=40))
+    with pytest.raises(QuotaExceeded) as e:
+        q.spend("playlists.insert")  # 50 shared units, only 40 left
+    assert e.value.bucket == "shared"
+    assert q.used("shared") == 0  # nothing reserved for a refused call
+
+
+def test_upload_bucket_is_separate_from_shared(store):
+    q = QuotaLedger(store, _tight_quota(shared_limit=10000, uploads_limit=2))
+    q.spend("videos.insert"); q.spend("videos.insert")
+    with pytest.raises(QuotaExceeded) as e:
         q.spend("videos.insert")
-    assert q.used_today() == 0  # nothing reserved for a call that was refused
+    assert e.value.bucket == "uploads"
+    assert q.remaining("shared") == 10000
 
 
-def test_external_usage_is_counted_for_its_day(store):
-    cfg = copy.deepcopy(CFG["quota"])
-    cfg["external_units_by_day"] = {"2026-11-18": 8000}
-    q = QuotaLedger(store, cfg)
-    assert q.external_used("2026-11-18") == 8000
-    assert q.remaining_today("2026-11-18") == 9000 - 8000
-    assert q.external_used("2026-11-19") == 0
+def test_search_bucket_counts_calls_not_shared_units(store):
+    q = QuotaLedger(store, _tight_quota(search_limit=3))
+    for _ in range(3):
+        q.spend("search.list")
+    assert q.remaining("search") == 0 and q.remaining("shared") == 1000
 
 
-def test_publish_blocked_when_quota_cannot_fit_upload(store, tmp_path, monkeypatch):
-    monkeypatch.setattr(publisher, "load_facts", lambda: [{"id": "f1", "primary_source_checked": True}])
-    rights.upsert_permission(store, "self:bounce-rumble", "verified", permission_source="own work",
-                             permission_date="2026-11-18", attribution="own", expires_at="2099-01-01",
-                             monetization_allowed=1)
-    _add_fake_short(store, tmp_path, fact_ids=("f1",))
-    # Today's real budget: 9000 usable - 8000 used by the daily job = 1000, below one 1600-unit upload.
-    tight = copy.deepcopy(CFG["quota"])
-    tight["external_units_by_day"] = {date.today().isoformat(): 8000}
-    res = publisher.publish_one(store, FakeYT(store, quota_cfg=tight), copy.deepcopy(CFG), "k:1:75", live=True)
-    assert res["result"] == "blocked" and "quota" in res["reason"]
+def test_external_usage_counted_per_bucket(store):
+    from gta.quota import pacific_day
+    q = QuotaLedger(store, _tight_quota(external={pacific_day(): {"uploads": 5, "shared": 15}}))
+    assert q.remaining("uploads") == 100 - 5
+    assert q.remaining("shared") == 1000 - 15
+
+
+def test_plan_day_for_publishing_and_discovery():
+    from gta.quota import plan_day
+    q = CFG["quota"]
+    methods, limits = q["methods"], q["buckets"]
+    fit = plan_day(7, 3, {"videos.list": 7, "playlistItems.insert": 7, "channels.list": 4},
+                   methods, limits, margin=0.9, external={"shared": 15})
+    assert fit["uploads"]["fits"] and fit["search"]["fits"] and fit["shared"]["fits"]
+    # Legacy assumption: 1600 units per upload in the shared pool would not fit 7 Shorts.
+    legacy = {**methods, "videos.insert": {"bucket": "shared", "units": 1600}}
+    bad = plan_day(7, 0, {}, legacy, limits, margin=0.9, external={"shared": 8000})
+    assert bad["shared"]["fits"] is False
 
 
 def test_unknown_method_has_no_cost(store):
@@ -217,7 +242,8 @@ def test_youtube_scan_dedupes_and_snapshots(store):
     rows = store.fetchall("SELECT * FROM candidates")
     assert len(rows) == 1 and rows[0]["id"] == "youtube:abc123"
     assert store.fetchone("SELECT COUNT(*) AS n FROM snapshots")["n"] >= 1
-    assert yt.quota.used_today() == 2 * (100 + 1)  # search + videos.list per scan
+    # two scans: each = one search.list (search bucket) + one videos.list (shared, 1 unit)
+    assert yt.quota.used("search") == 2 and yt.quota.used("shared") == 2
 
 
 class FakeTwitchSession:
