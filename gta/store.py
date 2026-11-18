@@ -99,6 +99,15 @@ CREATE TABLE IF NOT EXISTS video_metrics (
     fetched_at TEXT,
     PRIMARY KEY (youtube_id, day)
 );
+CREATE TABLE IF NOT EXISTS sources (
+    source_id TEXT PRIMARY KEY,                    -- "<platform>:<native id>" or "file:<sha1>"
+    creator_id TEXT NOT NULL,
+    title TEXT,
+    url TEXT,
+    local_path TEXT,
+    acquisition TEXT NOT NULL,                     -- owned | creator_file | metadata_only
+    added_at TEXT
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,

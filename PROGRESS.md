@@ -122,3 +122,14 @@ The 364 shared units include 50 per playlist add (`playlistItems.insert`) and 1 
 **Monitoring.** `QuotaLedger` tracks all three buckets separately. `remaining()` and `summary()` report usable, external, used and remaining per bucket. `spend()` refuses a call that does not fit its bucket. `plan_day()` checks a whole day before any run. Config has `external_usage_by_day` per bucket, which must be filled in from the daily job's real usage.
 
 **Still open:** read the real limits and per-method costs in Cloud Console (YouTube Data API v3 → Quotas) and compare with `gta/config.json`. The daily job's quota is outside this ledger, and it adds to the `external_usage_by_day` estimate.
+
+## Clipping pipeline (added 2026-11-18)
+
+- `gta/clip.py`: registers local source files with a creator and an acquisition type (`owned` or `creator_file`). Renders vertical 1080×1920 clips: blurred background fill, a hook card, timed captions, a source attribution line, and -14 LUFS loudness. Every clip is queued with the source's `creator_id`.
+- `gta/moments.py`: finds highlight windows from the loudness of the source's own audio (per-second dBFS, top non-overlapping windows). Visual action and chat-spike signals are not implemented.
+- Publishing is still gated by `gta/publisher.py`. Clips whose creator has no verified permission record stay queued and blocked. They are prepared, never published.
+
+**Acquisition.** The pipeline does not download streams from YouTube or Twitch. Both platforms' terms do not allow it, and the pipeline would then depend on bypassing platform restrictions. Discovery (metadata, search, live status) is API-based. Clippable input is limited to files the owner holds or a creator has supplied under a verified record.
+
+**Tests.** `tests/test_clip.py` covers moment detection (the loud-burst case, and the minimum gap between highlights) and the registration rules (metadata-only sources rejected, creator required). End-to-end rendering was run once on a synthetic generated source for testing only. That source and its output are not published.
+
